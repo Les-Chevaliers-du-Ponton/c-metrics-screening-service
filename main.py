@@ -296,7 +296,7 @@ class Screener:
 
     async def get_exchanges_mappings(self):
         for exchange in self.exchange_list:
-            exchange_object = get_exchange_object(exchange, async_mode=True)
+            exchange_object = get_exchange_object(exchange)
             symbols = await exchange_object.load_markets()
             filtered_symbols = dict()
             for symbol, details in symbols.items():
