@@ -9,7 +9,7 @@ import ccxt.async_support as ccxt
 import pandas as pd
 import pandas_ta as ta
 import websockets
-from helpers import BASE_WS, LOG, WS_PORT
+from helpers import BASE_WS, HOST, LOG, WS_PORT, get_exchange_object
 from indicators.technicals import FractalCandlestickPattern
 
 
@@ -346,7 +346,7 @@ async def run_websocket():
         exchange_list=["coinbase"], user_symbols_list=["BTC-USD", "ETH-USD"]
     )
     screening_task = asyncio.create_task(screener.run_screening())
-    start_server = websockets.serve(screener.run_client_websocket, "localhost", 8795)
+    start_server = websockets.serve(screener.run_client_websocket, HOST, 8795)
     await asyncio.gather(screening_task, start_server)
 
 
