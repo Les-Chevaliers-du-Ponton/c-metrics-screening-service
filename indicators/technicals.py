@@ -3,8 +3,8 @@ import pandas as pd
 
 
 class FractalCandlestickPattern:
-    def __init__(self, df: pd.DataFrame):
-        self.df = df.reset_index(drop=True)
+    def __init__(self):
+        self.df = pd.DataFrame()
         self.levels = []
         self.output = []
 
@@ -35,7 +35,8 @@ class FractalCandlestickPattern:
             self.levels.append((i, level))
             self.output.append(level)
 
-    def run(self):
+    def get_fractals(self, df: pd.DataFrame):
+        self.df = df
         for i in range(2, len(self.df) - 2):
             if self.is_support(i) or self.is_resistance(i):
                 self.handle_level(i)
