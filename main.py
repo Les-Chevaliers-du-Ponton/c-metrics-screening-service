@@ -5,7 +5,6 @@ from datetime import datetime as dt
 
 import pandas as pd
 import pandas_ta as ta
-import websockets
 
 import helpers
 from indicators.technicals import FractalCandlestickPattern
@@ -38,6 +37,7 @@ class Strategy(FractalCandlestickPattern):
 
 class Initializer(Strategy):
     def __init__(self, exchange_name: str, pairs: list):
+        self.redis_streams = None
         self.verbose = os.getenv("VERBOSE")
         self.pairs = pairs
         self.ref_currency = os.getenv("REFERENCE_CURRENCY")
@@ -47,7 +47,6 @@ class Initializer(Strategy):
             )
         self.exchange_name = exchange_name.lower()
         self.exchange_object = helpers.get_exchange_object(self.exchange_name)
-        self.redis_streams = helpers.get_available_redis_streams()
         self.data = dict()
         self.scores = pd.DataFrame(columns=["pair"])
         super().__init__()
@@ -105,8 +104,7 @@ class Initializer(Strategy):
         await asyncio.gather(*tasks)
 
     async def load_initial_data(self):
-        await self.get_exchange_mapping()
-        await self.load_all_data()
+        self.redis_streams = await helpers.get_available_redis_streams()
 
 
 class ExchangeScreener(Initializer):
@@ -115,7 +113,6 @@ class ExchangeScreener(Initializer):
 
     async def run_screening(self):
         await self.load_initial_data()
-        self.get_scoring()
         await self.screen_exchange()
 
     def add_technical_indicators(self, pair: str):
@@ -280,11 +277,6 @@ class ExchangeScreener(Initializer):
             top_scores = self.scores.head(top_score_amount)
             helpers.LOG.info(top_scores.to_string())
 
-    async def get_ws_uri(self) -> str:
-        pairs = [f"{self.exchange_name.upper()}-{pair}" for pair in self.data.keys()]
-        pair_str = ",".join(pairs)
-        return f"ws://{os.getenv('API_HOST')}:{os.getenv('API_PORT')}/ws/live_data/?pairs={pair_str}"
-
     async def write_to_redis(self):
         async with helpers.REDIS_CON.pipeline(transaction=False) as pipe:
             data = self.scores.to_json(orient="records")
@@ -297,19 +289,11 @@ class ExchangeScreener(Initializer):
             await pipe.execute()
 
     async def screen_exchange(self):
-        uri = await self.get_ws_uri()
-        async with websockets.connect(uri, ping_interval=None) as server_ws:
-            while True:
-                data = await helpers.REDIS_CON.xread(
-                    streams=self.redis_streams, block=0
-                )
-                data = data[0][1]
-                _, message = data[len(data) - 1]
-                self.live_refresh(message)
-                if self.verbose:
-                    self.log_scores()
-                await self.write_to_redis()
-                await asyncio.sleep(0)
+        while True:
+            data = await helpers.REDIS_CON.xread(streams=self.redis_streams, block=0)
+            data = data[0][1]
+            _, message = data[len(data) - 1]
+            print(message)
 
 
 async def run_screening(exchange_list: list = None, pairs: list = None):
