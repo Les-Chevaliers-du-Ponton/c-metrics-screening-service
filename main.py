@@ -156,11 +156,12 @@ class ExchangeScreener(Initializer):
             ohlcv = pd.concat([ohlcv, new_row])
         else:
             idx = ohlcv.index[len(ohlcv) - 1]
-            price = float(data["price"])
-            ohlcv.loc[idx, "high"] = max(ohlcv.loc[idx, "high"], price)
-            ohlcv.loc[idx, "low"] = min(ohlcv.loc[idx, "low"], price)
-            ohlcv.loc[idx, "close"] = price
-            ohlcv.loc[idx, "volume"] += float(data["amount"])
+            if "price" in data:
+                price = float(data["price"])
+                ohlcv.loc[idx, "high"] = max(ohlcv.loc[idx, "high"], price)
+                ohlcv.loc[idx, "low"] = min(ohlcv.loc[idx, "low"], price)
+                ohlcv.loc[idx, "close"] = price
+                ohlcv.loc[idx, "volume"] += float(data["amount"])
         self.data[pair]["ohlcv"] = ohlcv
 
     def update_book(self, pair: str, data: dict):
