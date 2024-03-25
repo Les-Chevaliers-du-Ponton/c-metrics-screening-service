@@ -168,10 +168,11 @@ class ExchangeScreener(Initializer):
         deltas = json.loads(data["delta"])
         for side, delta_data in deltas.items():
             side += "s"
-            df = self.data[pair]["book"][side]
-            delta_df = pd.DataFrame(delta_data, columns=["price", "volume"])
-            df.update(delta_df.set_index("price"))
-            self.data[pair]["book"][side] = df
+            if 'book' in self.data[pair]:
+                df = self.data[pair]["book"][side]
+                delta_df = pd.DataFrame(delta_data, columns=["price", "volume"])
+                df.update(delta_df.set_index("price"))
+                self.data[pair]["book"][side] = df
 
     def read_message(self, message: dict) -> str:
         pair = message["symbol"]
@@ -284,8 +285,9 @@ class ExchangeScreener(Initializer):
     async def write_to_redis(self):
         df = self.scores.copy()
         df = df.set_index('pair')
-        data = df.to_json(orient='index')
-        if data:
+        if not df.empty:
+            data = df.to_json(orient='index')
+            data = {k: json.dumps(v) for k, v in json.loads(data).items()}
             await helpers.REDIS_CON.xadd(
                 "{screening}",
                 data,
