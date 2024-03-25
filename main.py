@@ -37,6 +37,7 @@ class Strategy(FractalCandlestickPattern):
 
 class Initializer(Strategy):
     def __init__(self, exchange_name: str, pairs: list):
+        self.redis_streams = None
         self.verbose = os.getenv("VERBOSE")
         self.pairs = pairs
         self.ref_currency = os.getenv("REFERENCE_CURRENCY")
@@ -46,7 +47,6 @@ class Initializer(Strategy):
             )
         self.exchange_name = exchange_name.lower()
         self.exchange_object = helpers.get_exchange_object(self.exchange_name)
-        self.redis_streams = await helpers.get_available_redis_streams()
         self.data = dict()
         self.scores = pd.DataFrame(columns=["pair"])
         super().__init__()
@@ -66,7 +66,7 @@ class Initializer(Strategy):
                 return True
         return False
 
-    async def get_pair_book(self, pair: str, data: str = None):
+    async def get_pair_book(self, pair: str):
         if pair not in self.data:
             self.data[pair] = dict()
         try:
@@ -104,6 +104,7 @@ class Initializer(Strategy):
         await asyncio.gather(*tasks)
 
     async def load_initial_data(self):
+        self.redis_streams = await helpers.get_available_redis_streams()
         await self.get_exchange_mapping()
         await self.load_all_data()
 
