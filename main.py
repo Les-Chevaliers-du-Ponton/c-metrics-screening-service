@@ -287,7 +287,7 @@ class ExchangeScreener(Initializer):
         data = df.to_json(orient='index')
         if data:
             await helpers.REDIS_CON.xadd(
-                "screening",
+                "{screening}",
                 data,
                 maxlen=1,
                 approximate=True,
