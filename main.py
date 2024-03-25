@@ -281,15 +281,14 @@ class ExchangeScreener(Initializer):
             helpers.LOG.info(top_scores.to_string())
 
     async def write_to_redis(self):
-        async with helpers.REDIS_CON.pipeline(transaction=False) as pipe:
-            data = self.scores.to_json(orient="records")
-            pipe = pipe.xadd(
+        data = self.scores.to_json(orient="records")
+        if data:
+            helpers.REDIS_CON.xadd(
                 "screening",
                 data,
                 maxlen=1,
                 approximate=True,
             )
-            await pipe.execute()
 
     async def screen_exchange(self):
         while True:
