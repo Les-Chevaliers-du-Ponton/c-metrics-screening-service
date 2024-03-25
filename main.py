@@ -281,11 +281,13 @@ class ExchangeScreener(Initializer):
             helpers.LOG.info(top_scores.to_string())
 
     async def write_to_redis(self):
-        data = self.scores.to_json(orient="records")
+        df = self.scores.copy()
+        df = df.set_index('pair')
+        data = df.to_json(orient='index')
         if data:
             helpers.REDIS_CON.xadd(
                 "screening",
-                data,
+                json.loads(data),
                 maxlen=1,
                 approximate=True,
             )
@@ -293,7 +295,7 @@ class ExchangeScreener(Initializer):
     async def screen_exchange(self):
         while True:
             streams = {stream: "$" for stream in self.redis_streams}
-            data = await helpers.REDIS_CON.xread(streams=streams, block=0)
+            data = await helpers.REDIS_CON.xread(streams=streams)
             data = data[0][1]
             _, message = data[len(data) - 1]
             self.live_refresh(message)
