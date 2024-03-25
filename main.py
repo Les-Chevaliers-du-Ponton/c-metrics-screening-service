@@ -288,7 +288,7 @@ class ExchangeScreener(Initializer):
         if data:
             await helpers.REDIS_CON.xadd(
                 "screening",
-                json.loads(data),
+                data,
                 maxlen=1,
                 approximate=True,
             )
