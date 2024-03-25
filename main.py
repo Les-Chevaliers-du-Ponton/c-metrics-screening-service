@@ -290,7 +290,8 @@ class ExchangeScreener(Initializer):
 
     async def screen_exchange(self):
         while True:
-            data = await helpers.REDIS_CON.xread(streams=self.redis_streams, block=0)
+            streams = {stream: "$" for stream in self.redis_streams}
+            data = await helpers.REDIS_CON.xread(streams=streams, block=0)
             data = data[0][1]
             _, message = data[len(data) - 1]
             print(message)
