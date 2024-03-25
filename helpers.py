@@ -41,7 +41,7 @@ async def get_available_redis_streams() -> list:
     i = 0
     all_streams = list()
     while True:
-        i, streams = await REDIS_CON.scan(i, _type="STREAM")
+        i, streams = await REDIS_CON.scan(i, _type="STREAM", match='{real-time}*')
         all_streams += streams
         if i == 0:
             return all_streams
