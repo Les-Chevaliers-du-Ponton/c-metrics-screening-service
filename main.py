@@ -215,8 +215,8 @@ class ExchangeScreener(Initializer):
     def handle_fractals(self, scoring: dict, pair: str) -> dict:
         fractal_refresh_tmstmp = helpers.REDIS_CON.xrevrange(
             "{fractal_refresh_tmstmp}", count=1
-        ).decode()
-        fractal_refresh_tmstmp = dt.fromisoformat(fractal_refresh_tmstmp["last"])
+        )
+        fractal_refresh_tmstmp = dt.fromisoformat(fractal_refresh_tmstmp[0][1]["last"])
         if (
             dt.now() - fractal_refresh_tmstmp
         ).seconds > self.fractal_refresh_seconds_delay:
