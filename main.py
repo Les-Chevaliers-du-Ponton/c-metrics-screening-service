@@ -38,7 +38,6 @@ class Strategy(FractalCandlestickPattern):
 
 class Initializer(Strategy):
     def __init__(self, exchange_name: str, pairs: list):
-        self.redis_streams = None
         self.verbose = os.getenv("VERBOSE")
         self.pairs = pairs
         self.ref_currency = os.getenv("REFERENCE_CURRENCY")
@@ -105,7 +104,6 @@ class Initializer(Strategy):
         await asyncio.gather(*tasks)
 
     async def load_initial_data(self):
-        self.redis_streams = await helpers.get_available_redis_streams()
         await self.get_exchange_mapping()
         await self.load_all_data()
 
@@ -133,6 +131,11 @@ class ExchangeScreener(Initializer):
     def live_refresh(self, message: dict):
         pair = self.read_message(message)
         self.get_scoring([pair])
+
+    async def live_refresh_in_separate_process(self, data: dict):
+        loop = asyncio.get_running_loop()
+        # TODO: This is CPU-bound. Use aiomultiprocess instead.
+        loop.run_in_executor(None, self.live_refresh, data)
 
     def update_pair_ohlcv(self, pair: str, data: dict):
         ohlcv = self.data[pair]["ohlcv"]
@@ -211,10 +214,9 @@ class ExchangeScreener(Initializer):
         ) - 1
         return dict(book_imbalance=book_imbalance, spread=spread)
 
-    def score_pair(self, pair: str):
+    def score_pair(self, pair: str) -> dict:
         if pair not in self.data:
             self.data[pair] = dict()
-        self.scores = self.scores[self.scores["pair"] != pair]
         if self.data[pair].get("ohlcv") is not None:
             scoring = dict()
             self.add_technical_indicators(pair)
@@ -265,55 +267,40 @@ class ExchangeScreener(Initializer):
             else:
                 scoring["technicals_score"] = 0
             scoring["pair"] = pair
-            pair_score_df = pd.DataFrame([scoring])
-            if not pair_score_df.empty:
-                self.scores = pd.concat([self.scores, pair_score_df])
+            return scoring
 
     def get_scoring(self, pairs_to_screen: list = None):
         pairs_to_screen = pairs_to_screen if pairs_to_screen else list(self.data.keys())
+        scores = list()
         for pair in pairs_to_screen:
-            self.score_pair(pair)
-            if not self.scores.empty:
-                self.scores.sort_values(
-                    by="technicals_score", ascending=False, inplace=True
-                )
+            scores.append(self.score_pair(pair))
+        self.scores = pd.DataFrame(scores)
+        if self.verbose:
+            self.log_scores()
 
     def log_scores(self, top_score_amount: int = 10):
         if self.scores is not None:
             top_scores = self.scores.head(top_score_amount)
             helpers.LOG.info(top_scores.to_string())
 
-    async def write_to_redis(self):
-        df = self.scores.copy()
-        df = df.set_index("pair")
-        if not df.empty:
-            data = df.to_json(orient="index")
-            data = {k: json.dumps(v) for k, v in json.loads(data).items()}
-            await helpers.REDIS_CON.xadd(
-                "{screening}",
-                data,
-                maxlen=1,
-                approximate=True,
-            )
-
     async def get_ws_uri(self) -> str:
-        pairs = [f"{self.exchange_name.upper()}-{pair}" for pair in self.data.keys()]
-        pair_str = ",".join(pairs)
-        return f"ws://{os.getenv('API_HOST')}:{os.getenv('API_PORT')}/ws/live_data/?pairs={pair_str}"
+        channels = list()
+        for pair in self.data.keys():
+            for method in ("trades", "book"):
+                channels.append(f"{method}-{self.exchange_name.upper()}-{pair}")
+        channels_str = ",".join(channels)
+        return f"ws://{os.getenv('API_HOST')}:{os.getenv('API_PORT')}/ws/live_data/?channels={channels_str}"
 
     async def screen_exchange(self):
         uri = await self.get_ws_uri()
         async with websockets.connect(uri, ping_interval=None) as server_ws:
             while True:
-                data = await helpers.REDIS_CON.xread(
-                    streams=self.redis_streams, block=0
-                )
-                data = data[0][1]
-                _, message = data[len(data) - 1]
-                self.live_refresh(message)
-                if self.verbose:
-                    self.log_scores()
-                await self.write_to_redis()
+                try:
+                    response = await server_ws.recv()
+                    await self.live_refresh_in_separate_process(json.loads(response))
+                except websockets.ConnectionClosedError or asyncio.IncompleteReadError:
+                    await self.exchange_object.close()
+                    break
                 await asyncio.sleep(0)
 
 
@@ -321,7 +308,6 @@ async def run_screening(exchange_list: list = None, pairs: list = None):
     if not exchange_list:
         exchange_list = ["coinbase"]
     for exchange in exchange_list:
-        # TODO: add multiprocessing
         screener = ExchangeScreener(exchange, pairs)
         await screener.run_screening()
 
