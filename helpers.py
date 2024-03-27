@@ -1,6 +1,7 @@
 import logging
 import os
 import warnings
+from datetime import datetime as dt
 
 import ccxt
 from dotenv import load_dotenv
@@ -45,3 +46,12 @@ def get_available_redis_streams() -> list:
         all_streams += streams
         if i == 0:
             return all_streams
+
+
+def write_fractal_refresh_tmstmp():
+    REDIS_CON.xadd(
+        "{fractal_refresh_tmstmp}",
+        {"last": dt.now().isoformat()},
+        maxlen=1,
+        approximate=True,
+    )

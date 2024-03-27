@@ -38,6 +38,7 @@ class Strategy(FractalCandlestickPattern):
 class Initializer(Strategy):
     def __init__(self, exchange_name: str, pairs: list):
         self.redis_streams = None
+        self.fractal_refresh_seconds_delay = 1
         self.verbose = os.getenv("VERBOSE")
         self.pairs = pairs
         self.ref_currency = os.getenv("REFERENCE_CURRENCY")
@@ -49,6 +50,8 @@ class Initializer(Strategy):
         self.exchange_object = helpers.get_exchange_object(self.exchange_name)
         self.data = dict()
         self.scores = pd.DataFrame(columns=["pair"])
+        self.all_scores = pd.DataFrame(columns=["pair"])
+        helpers.write_fractal_refresh_tmstmp()
         super().__init__()
 
     def get_exchange_mapping(self):
@@ -132,8 +135,6 @@ class ExchangeScreener(Initializer):
         self.get_scoring([pair])
         self.write_to_redis()
 
-    def live_refresh_in_separate_process(self, data: dict): ...
-
     def update_pair_ohlcv(self, pair: str, data: dict):
         ohlcv = self.data[pair]["ohlcv"]
         trade_timestamp = dt.utcfromtimestamp(float(data["timestamp"])).date()
@@ -211,13 +212,49 @@ class ExchangeScreener(Initializer):
         ) - 1
         return dict(book_imbalance=book_imbalance, spread=spread)
 
+    def handle_fractals(self, scoring: dict, pair: str) -> dict:
+        fractal_refresh_tmstmp = helpers.REDIS_CON.xrevrange(
+            "{fractal_refresh_tmstmp}", count=1
+        ).decode()
+        fractal_refresh_tmstmp = dt.fromisoformat(fractal_refresh_tmstmp["last"])
+        if (
+            dt.now() - fractal_refresh_tmstmp
+        ).seconds > self.fractal_refresh_seconds_delay:
+            helpers.write_fractal_refresh_tmstmp()
+            fractals = self.get_fractals(self.data[pair]["ohlcv"])
+            supports = [level for level in fractals if level < scoring["close"]]
+            resistances = [level for level in fractals if level > scoring["close"]]
+            scoring["next_support"] = float(max(supports)) if supports else None
+            scoring["next_resistance"] = (
+                float(min(resistances)) if resistances else None
+            )
+            scoring["potential_gain"] = (
+                (scoring["next_resistance"] / scoring["next_support"]) - 1
+                if supports and resistances
+                else None
+            )
+            scoring["support_dist"] = (
+                (scoring["close"] / scoring["next_support"]) - 1 if supports else None
+            )
+        else:
+            pair_score = self.all_scores[self.all_scores["pair"] == pair].squeeze()
+            fractal_related_fields = (
+                "next_support",
+                "next_resistance",
+                "potential_gain",
+                "support_dist",
+            )
+            for field in fractal_related_fields:
+                scoring[field] = pair_score[field]
+        return scoring
+
     def score_pair(self, pair: str) -> dict:
         if pair not in self.data:
             self.data[pair] = dict()
         if self.data[pair].get("ohlcv") is not None:
             scoring = dict()
             self.add_technical_indicators(pair)
-            fractals = self.get_fractals(self.data[pair]["ohlcv"])
+            scoring = self.handle_fractals(scoring, pair)
             scoring["close"] = self.data[pair]["ohlcv"]["close"].iloc[-1]
             scoring["24h_change"] = (
                 scoring["close"] / self.data[pair]["ohlcv"]["open"].iloc[-1] - 1
@@ -239,20 +276,6 @@ class ExchangeScreener(Initializer):
                 )
             except ValueError:
                 scoring["bbl"] = None
-            supports = [level for level in fractals if level < scoring["close"]]
-            resistances = [level for level in fractals if level > scoring["close"]]
-            scoring["next_support"] = float(max(supports)) if supports else None
-            scoring["next_resistance"] = (
-                float(min(resistances)) if resistances else None
-            )
-            scoring["potential_gain"] = (
-                (scoring["next_resistance"] / scoring["next_support"]) - 1
-                if supports and resistances
-                else None
-            )
-            scoring["support_dist"] = (
-                (scoring["close"] / scoring["next_support"]) - 1 if supports else None
-            )
             book_score_details = self.get_book_scoring(pair)
             scoring = {**scoring, **book_score_details}
             if scoring["support_dist"] and scoring["bbl"] and scoring["rsi"]:
@@ -272,6 +295,8 @@ class ExchangeScreener(Initializer):
         for pair in pairs_to_screen:
             scores.append(self.score_pair(pair))
         self.scores = pd.DataFrame(scores)
+        if not pairs_to_screen:
+            self.all_scores = self.scores.copy()
         if self.verbose:
             self.log_scores()
 
