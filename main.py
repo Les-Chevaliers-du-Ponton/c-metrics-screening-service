@@ -216,10 +216,17 @@ class ExchangeScreener(Initializer):
         fractal_refresh_tmstmp = helpers.REDIS_CON.xrevrange(
             "{fractal_refresh_tmstmp}", count=1
         )
+        fractal_related_fields = (
+            "next_support",
+            "next_resistance",
+            "potential_gain",
+            "support_dist",
+        )
         fractal_refresh_tmstmp = dt.fromisoformat(fractal_refresh_tmstmp[0][1]["last"])
+        missing_keys = set(fractal_related_fields) - set(scoring.keys())
         if (
             dt.now() - fractal_refresh_tmstmp
-        ).seconds > self.fractal_refresh_seconds_delay:
+        ).seconds > self.fractal_refresh_seconds_delay or missing_keys:
             helpers.write_fractal_refresh_tmstmp()
             fractals = self.get_fractals(self.data[pair]["ohlcv"])
             supports = [level for level in fractals if level < scoring["close"]]
@@ -238,12 +245,6 @@ class ExchangeScreener(Initializer):
             )
         else:
             pair_score = self.all_scores[self.all_scores["pair"] == pair].squeeze()
-            fractal_related_fields = (
-                "next_support",
-                "next_resistance",
-                "potential_gain",
-                "support_dist",
-            )
             for field in fractal_related_fields:
                 scoring[field] = pair_score[field]
         return scoring
@@ -306,6 +307,7 @@ class ExchangeScreener(Initializer):
             helpers.LOG.info(top_scores.to_string())
 
     def write_to_redis(self):
+        # TODO: one screening stream per pair
         df = self.scores.copy()
         df = df.set_index("pair")
         if not df.empty:
