@@ -1,7 +1,7 @@
-import asyncio
 import json
 import os
 from datetime import datetime as dt
+from multiprocessing import Process
 
 import pandas as pd
 import pandas_ta as ta
@@ -51,8 +51,8 @@ class Initializer(Strategy):
         self.scores = pd.DataFrame(columns=["pair"])
         super().__init__()
 
-    async def get_exchange_mapping(self):
-        symbols = await self.exchange_object.load_markets()
+    def get_exchange_mapping(self):
+        symbols = self.exchange_object.load_markets()
         for details in symbols.values():
             if self.is_pair_in_scope(details):
                 pair = details["id"].replace("/", "-")
@@ -66,11 +66,11 @@ class Initializer(Strategy):
                 return True
         return False
 
-    async def get_pair_book(self, pair: str):
+    def get_pair_book(self, pair: str):
         if pair not in self.data:
             self.data[pair] = dict()
         try:
-            data = await self.exchange_object.fetch_order_book(symbol=pair, limit=100)
+            data = self.exchange_object.fetch_order_book(symbol=pair, limit=100)
             self.data[pair]["book"] = dict()
             for side in ("bids", "asks"):
                 df = pd.DataFrame(data[side], columns=["price", "volume"])
@@ -81,10 +81,10 @@ class Initializer(Strategy):
         except Exception as e:
             helpers.LOG.warning(f"Could not download order book for {pair}: \n {e}")
 
-    async def get_pair_ohlcv(self, pair: str):
+    def get_pair_ohlcv(self, pair: str):
         if pair not in self.data:
             self.data[pair] = dict()
-        ohlc_data = await self.exchange_object.fetch_ohlcv(
+        ohlc_data = self.exchange_object.fetch_ohlcv(
             symbol=pair, timeframe="1d", limit=300
         )
         if self.verbose:
@@ -97,31 +97,29 @@ class Initializer(Strategy):
         )
         self.data[pair]["ohlcv"] = df.tail(25).reset_index(drop=True)
 
-    async def load_all_data(self):
-        tasks = list()
+    def load_all_data(self):
         for pair in self.data:
-            tasks += [self.get_pair_ohlcv(pair), self.get_pair_book(pair)]
-        await asyncio.gather(*tasks)
+            self.get_pair_ohlcv(pair)
+            self.get_pair_book(pair)
 
-    async def load_initial_data(self):
-        self.redis_streams = await helpers.get_available_redis_streams()
-        await self.get_exchange_mapping()
-        await self.load_all_data()
+    def load_initial_data(self):
+        self.redis_streams = helpers.get_available_redis_streams()
+        self.get_exchange_mapping()
+        self.load_all_data()
 
 
 class ExchangeScreener(Initializer):
     def __init__(self, exchange_name: str, pairs: list):
         super().__init__(exchange_name, pairs)
 
-    async def run_screening(self):
-        await self.load_initial_data()
+    def run_screening(self):
+        self.load_initial_data()
         self.get_scoring()
-        await self.screen_exchange()
+        self.screen_exchange()
 
     def add_technical_indicators(self, pair: str):
         if self.verbose:
             helpers.LOG.info(f"Computing technical indicators for {pair}")
-        self.data[pair]["ohlcv"].ta.cores = 0
         try:
             self.data[pair]["ohlcv"].ta.strategy(self.ta_strat)
         except Exception as e:
@@ -129,15 +127,12 @@ class ExchangeScreener(Initializer):
                 f"Could not compute all indicators for {pair}:\n \n {e}"
             )
 
-    async def live_refresh(self, message: dict):
+    def live_refresh(self, message: dict):
         pair = self.read_message(message)
         self.get_scoring([pair])
-        await self.write_to_redis()
+        self.write_to_redis()
 
-    async def live_refresh_in_separate_process(self, data: dict):
-        loop = asyncio.get_running_loop()
-        # TODO: This is CPU-bound. Use aiomultiprocess instead.
-        loop.run_in_executor(None, self.live_refresh, data)
+    def live_refresh_in_separate_process(self, data: dict): ...
 
     def update_pair_ohlcv(self, pair: str, data: dict):
         ohlcv = self.data[pair]["ohlcv"]
@@ -285,36 +280,35 @@ class ExchangeScreener(Initializer):
             top_scores = self.scores.head(top_score_amount)
             helpers.LOG.info(top_scores.to_string())
 
-    async def write_to_redis(self):
+    def write_to_redis(self):
         df = self.scores.copy()
         df = df.set_index("pair")
         if not df.empty:
             data = df.to_json(orient="index")
             data = {k: json.dumps(v) for k, v in json.loads(data).items()}
-            await helpers.REDIS_CON.xadd(
+            helpers.REDIS_CON.xadd(
                 "{screening}",
                 data,
                 maxlen=len(self.data),
                 approximate=True,
             )
 
-    async def screen_exchange(self):
+    def screen_exchange(self):
         while True:
             streams = {stream: "$" for stream in self.redis_streams}
-            data = await helpers.REDIS_CON.xread(streams=streams, block=0)
+            data = helpers.REDIS_CON.xread(streams=streams, block=0)
             message = data[0][1][0][1]
-            await self.live_refresh(message)
-            await asyncio.sleep(0)
+            Process(target=self.live_refresh, args=(message,)).start()
 
 
-async def run_screening(exchange_list: list = None, pairs: list = None):
+def run_screening(exchange_list: list = None, pairs: list = None):
     if not exchange_list:
         exchange_list = ["coinbase"]
     for exchange in exchange_list:
         # TODO: add multiprocessing
         screener = ExchangeScreener(exchange, pairs)
-        await screener.run_screening()
+        screener.run_screening()
 
 
 if __name__ == "__main__":
-    asyncio.run(run_screening())
+    run_screening()
