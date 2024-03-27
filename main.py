@@ -5,6 +5,7 @@ from datetime import datetime as dt
 
 import pandas as pd
 import pandas_ta as ta
+import websockets
 
 import helpers
 from indicators.technicals import FractalCandlestickPattern
@@ -168,7 +169,7 @@ class ExchangeScreener(Initializer):
         deltas = json.loads(data["delta"])
         for side, delta_data in deltas.items():
             side += "s"
-            if 'book' in self.data[pair]:
+            if "book" in self.data[pair]:
                 df = self.data[pair]["book"][side]
                 delta_df = pd.DataFrame(delta_data, columns=["price", "volume"])
                 df.update(delta_df.set_index("price"))
@@ -284,9 +285,9 @@ class ExchangeScreener(Initializer):
 
     async def write_to_redis(self):
         df = self.scores.copy()
-        df = df.set_index('pair')
+        df = df.set_index("pair")
         if not df.empty:
-            data = df.to_json(orient='index')
+            data = df.to_json(orient="index")
             data = {k: json.dumps(v) for k, v in json.loads(data).items()}
             await helpers.REDIS_CON.xadd(
                 "{screening}",
@@ -295,16 +296,25 @@ class ExchangeScreener(Initializer):
                 approximate=True,
             )
 
+    async def get_ws_uri(self) -> str:
+        pairs = [f"{self.exchange_name.upper()}-{pair}" for pair in self.data.keys()]
+        pair_str = ",".join(pairs)
+        return f"ws://{os.getenv('API_HOST')}:{os.getenv('API_PORT')}/ws/live_data/?pairs={pair_str}"
+
     async def screen_exchange(self):
-        while True:
-            streams = {stream: "$" for stream in self.redis_streams}
-            data = await helpers.REDIS_CON.xread(streams=streams, block=0)
-            message = data[0][1][0][1]
-            self.live_refresh(message)
-            if self.verbose:
-                self.log_scores()
-            await self.write_to_redis()
-            await asyncio.sleep(0)
+        uri = await self.get_ws_uri()
+        async with websockets.connect(uri, ping_interval=None) as server_ws:
+            while True:
+                data = await helpers.REDIS_CON.xread(
+                    streams=self.redis_streams, block=0
+                )
+                data = data[0][1]
+                _, message = data[len(data) - 1]
+                self.live_refresh(message)
+                if self.verbose:
+                    self.log_scores()
+                await self.write_to_redis()
+                await asyncio.sleep(0)
 
 
 async def run_screening(exchange_list: list = None, pairs: list = None):
