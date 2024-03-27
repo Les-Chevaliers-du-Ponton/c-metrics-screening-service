@@ -303,7 +303,7 @@ class ExchangeScreener(Initializer):
             streams = {stream: "$" for stream in self.redis_streams}
             data = await helpers.REDIS_CON.xread(streams=streams, block=0)
             message = data[0][1][0][1]
-            await self.live_refresh_in_separate_process(message)
+            await self.live_refresh(message)
             await asyncio.sleep(0)
 
 
