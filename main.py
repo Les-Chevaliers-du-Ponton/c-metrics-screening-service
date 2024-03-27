@@ -99,7 +99,7 @@ class Initializer(Strategy):
             data=ohlc_data,
             columns=["timestamp", "open", "high", "low", "close", "volume"],
         )
-        self.data[pair]["ohlcv"] = df.tail(25).reset_index(drop=True)
+        self.data[pair]["ohlcv"] = df.reset_index(drop=True)
 
     def load_all_data(self):
         for pair in self.data:
