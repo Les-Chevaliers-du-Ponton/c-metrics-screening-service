@@ -132,6 +132,12 @@ class ExchangeScreener(Initializer):
     def live_refresh(self, message: dict):
         pair = self.read_message(message)
         self.get_scoring([pair])
+        await self.write_to_redis()
+
+    async def live_refresh_in_separate_process(self, data: dict):
+        loop = asyncio.get_running_loop()
+        # TODO: This is CPU-bound. Use aiomultiprocess instead.
+        loop.run_in_executor(None, self.live_refresh, data)
 
     def update_pair_ohlcv(self, pair: str, data: dict):
         ohlcv = self.data[pair]["ohlcv"]
@@ -168,7 +174,7 @@ class ExchangeScreener(Initializer):
         deltas = json.loads(data["delta"])
         for side, delta_data in deltas.items():
             side += "s"
-            if 'book' in self.data[pair]:
+            if "book" in self.data[pair]:
                 df = self.data[pair]["book"][side]
                 delta_df = pd.DataFrame(delta_data, columns=["price", "volume"])
                 df.update(delta_df.set_index("price"))
@@ -210,10 +216,9 @@ class ExchangeScreener(Initializer):
         ) - 1
         return dict(book_imbalance=book_imbalance, spread=spread)
 
-    def score_pair(self, pair: str):
+    def score_pair(self, pair: str) -> dict:
         if pair not in self.data:
             self.data[pair] = dict()
-        self.scores = self.scores[self.scores["pair"] != pair]
         if self.data[pair].get("ohlcv") is not None:
             scoring = dict()
             self.add_technical_indicators(pair)
@@ -264,18 +269,16 @@ class ExchangeScreener(Initializer):
             else:
                 scoring["technicals_score"] = 0
             scoring["pair"] = pair
-            pair_score_df = pd.DataFrame([scoring])
-            if not pair_score_df.empty:
-                self.scores = pd.concat([self.scores, pair_score_df])
+            return scoring
 
     def get_scoring(self, pairs_to_screen: list = None):
         pairs_to_screen = pairs_to_screen if pairs_to_screen else list(self.data.keys())
+        scores = list()
         for pair in pairs_to_screen:
-            self.score_pair(pair)
-            if not self.scores.empty:
-                self.scores.sort_values(
-                    by="technicals_score", ascending=False, inplace=True
-                )
+            scores.append(self.score_pair(pair))
+        self.scores = pd.DataFrame(scores)
+        if self.verbose:
+            self.log_scores()
 
     def log_scores(self, top_score_amount: int = 10):
         if self.scores is not None:
@@ -284,14 +287,14 @@ class ExchangeScreener(Initializer):
 
     async def write_to_redis(self):
         df = self.scores.copy()
-        df = df.set_index('pair')
+        df = df.set_index("pair")
         if not df.empty:
-            data = df.to_json(orient='index')
+            data = df.to_json(orient="index")
             data = {k: json.dumps(v) for k, v in json.loads(data).items()}
             await helpers.REDIS_CON.xadd(
                 "{screening}",
                 data,
-                maxlen=1,
+                maxlen=len(self.data),
                 approximate=True,
             )
 
@@ -300,10 +303,7 @@ class ExchangeScreener(Initializer):
             streams = {stream: "$" for stream in self.redis_streams}
             data = await helpers.REDIS_CON.xread(streams=streams, block=0)
             message = data[0][1][0][1]
-            self.live_refresh(message)
-            if self.verbose:
-                self.log_scores()
-            await self.write_to_redis()
+            await self.live_refresh_in_separate_process(message)
             await asyncio.sleep(0)
 
 
