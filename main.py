@@ -129,7 +129,7 @@ class ExchangeScreener(Initializer):
                 f"Could not compute all indicators for {pair}:\n \n {e}"
             )
 
-    def live_refresh(self, message: dict):
+    async def live_refresh(self, message: dict):
         pair = self.read_message(message)
         self.get_scoring([pair])
         await self.write_to_redis()
