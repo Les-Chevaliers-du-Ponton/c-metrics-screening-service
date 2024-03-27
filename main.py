@@ -51,7 +51,8 @@ class Initializer(Strategy):
         self.data = dict()
         self.scores = pd.DataFrame(columns=["pair"])
         self.all_scores = pd.DataFrame(columns=["pair"])
-        helpers.write_fractal_refresh_tmstmp()
+        helpers.write_fractal_refresh_tmstmp(init=True)
+        self.load_initial_data()
         super().__init__()
 
     def get_exchange_mapping(self):
@@ -116,7 +117,6 @@ class ExchangeScreener(Initializer):
         super().__init__(exchange_name, pairs)
 
     def run_screening(self):
-        self.load_initial_data()
         self.get_scoring()
         self.screen_exchange()
 
@@ -254,7 +254,6 @@ class ExchangeScreener(Initializer):
         if self.data[pair].get("ohlcv") is not None:
             scoring = dict()
             self.add_technical_indicators(pair)
-            scoring = self.handle_fractals(scoring, pair)
             scoring["close"] = self.data[pair]["ohlcv"]["close"].iloc[-1]
             scoring["24h_change"] = (
                 scoring["close"] / self.data[pair]["ohlcv"]["open"].iloc[-1] - 1
@@ -276,6 +275,7 @@ class ExchangeScreener(Initializer):
                 )
             except ValueError:
                 scoring["bbl"] = None
+            scoring = self.handle_fractals(scoring, pair)
             book_score_details = self.get_book_scoring(pair)
             scoring = {**scoring, **book_score_details}
             if scoring["support_dist"] and scoring["bbl"] and scoring["rsi"]:
