@@ -168,29 +168,29 @@ class ExchangeScreener(Initializer):
         )
         fractal_refresh_tmstmp = dt.fromisoformat(fractal_refresh_tmstmp[0][1]["last"])
         missing_keys = set(fractal_related_fields) - set(scoring.keys())
-        if (
-            dt.now() - fractal_refresh_tmstmp
-        ).seconds > self.fractal_refresh_seconds_delay or missing_keys:
-            helpers.write_fractal_refresh_tmstmp()
-            fractals = self.get_fractals(self.data[pair]["ohlcv"])
-            supports = [level for level in fractals if level < scoring["close"]]
-            resistances = [level for level in fractals if level > scoring["close"]]
-            scoring["next_support"] = float(max(supports)) if supports else None
-            scoring["next_resistance"] = (
-                float(min(resistances)) if resistances else None
-            )
-            scoring["potential_gain"] = (
-                (scoring["next_resistance"] / scoring["next_support"]) - 1
-                if supports and resistances
-                else None
-            )
-            scoring["support_dist"] = (
-                (scoring["close"] / scoring["next_support"]) - 1 if supports else None
-            )
-        else:
-            pair_score = self.all_scores[self.all_scores["pair"] == pair].squeeze()
-            for field in fractal_related_fields:
-                scoring[field] = pair_score[field]
+        # if (
+        #     dt.now() - fractal_refresh_tmstmp
+        # ).seconds > self.fractal_refresh_seconds_delay or missing_keys:
+        helpers.write_fractal_refresh_tmstmp()
+        fractals = self.get_fractals(self.data[pair]["ohlcv"])
+        supports = [level for level in fractals if level < scoring["close"]]
+        resistances = [level for level in fractals if level > scoring["close"]]
+        scoring["next_support"] = float(max(supports)) if supports else None
+        scoring["next_resistance"] = (
+            float(min(resistances)) if resistances else None
+        )
+        scoring["potential_gain"] = (
+            (scoring["next_resistance"] / scoring["next_support"]) - 1
+            if supports and resistances
+            else None
+        )
+        scoring["support_dist"] = (
+            (scoring["close"] / scoring["next_support"]) - 1 if supports else None
+        )
+        # else:
+        #     pair_score = self.all_scores[self.all_scores["pair"] == pair].squeeze()
+        #     for field in fractal_related_fields:
+        #         scoring[field] = pair_score[field]
         return scoring
 
     def technicals_score(self, pair: str) -> dict:
