@@ -196,6 +196,7 @@ class ExchangeScreener(Initializer):
     def technicals_score(self, pair: str) -> dict:
         scoring = dict()
         self.add_technical_indicators(pair)
+        self.data[pair]["ohlcv"] = self.data[pair]["ohlcv"].astype(float)
         scoring["close"] = self.data[pair]["ohlcv"]["close"].iloc[-1]
         scoring["24h_change"] = (
             scoring["close"] / self.data[pair]["ohlcv"]["open"].iloc[-1] - 1
