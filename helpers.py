@@ -42,7 +42,7 @@ def get_available_redis_streams() -> list:
     i = 0
     all_streams = list()
     while True:
-        i, streams = REDIS_CON.scan(i, _type="STREAM", match="{real-time}*")
+        i, streams = REDIS_CON.scan(i, _type="STREAM", match="{real-time}-trades-*")
         all_streams += streams
         if i == 0:
             return all_streams

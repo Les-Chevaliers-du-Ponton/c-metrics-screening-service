@@ -70,21 +70,6 @@ class Initializer(Strategy):
                 return True
         return False
 
-    def get_pair_book(self, pair: str):
-        if pair not in self.data:
-            self.data[pair] = dict()
-        try:
-            data = self.exchange_object.fetch_order_book(symbol=pair, limit=100)
-            self.data[pair]["book"] = dict()
-            for side in ("bids", "asks"):
-                df = pd.DataFrame(data[side], columns=["price", "volume"])
-                df.set_index("price", inplace=True)
-                self.data[pair]["book"][side] = df
-            if self.verbose:
-                helpers.LOG.info(f"Downloading Order Book data for {pair}")
-        except Exception as e:
-            helpers.LOG.warning(f"Could not download order book for {pair}: \n {e}")
-
     def get_pair_ohlcv(self, pair: str):
         if pair not in self.data:
             self.data[pair] = dict()
@@ -104,7 +89,6 @@ class Initializer(Strategy):
     def load_all_data(self):
         for pair in self.data:
             self.get_pair_ohlcv(pair)
-            self.get_pair_book(pair)
 
     def load_initial_data(self):
         self.redis_streams = helpers.get_available_redis_streams()
@@ -166,51 +150,11 @@ class ExchangeScreener(Initializer):
                 ohlcv.loc[idx, "volume"] += float(data["amount"])
         self.data[pair]["ohlcv"] = ohlcv
 
-    def update_book(self, pair: str, data: dict):
-        deltas = json.loads(data["delta"])
-        for side, delta_data in deltas.items():
-            side += "s"
-            if "book" in self.data[pair]:
-                df = self.data[pair]["book"][side]
-                delta_df = pd.DataFrame(delta_data, columns=["price", "volume"])
-                df.update(delta_df.set_index("price"))
-                self.data[pair]["book"][side] = df
-
     def read_message(self, message: dict) -> str:
         pair = message["symbol"]
-        method = "book" if "delta" in message else "trades"
         if pair in self.data:
-            if method == "trades":
-                self.update_pair_ohlcv(pair, message)
-            else:
-                self.update_book(pair, message)
+            self.update_pair_ohlcv(pair, message)
         return pair
-
-    def get_book_scoring(self, pair: str, max_depth: int = 0.2) -> dict:
-        data = dict()
-        if "book" not in self.data[pair]:
-            return dict(book_imbalance=None, spread=None)
-        pair_book = self.data[pair]["book"]
-        for side in ("bids", "asks"):
-            df = pair_book[side]
-            df["depth"] = df.index
-            df["depth"] = df["depth"].apply(
-                lambda x: (
-                    df.iloc[0]["depth"] / x
-                    if side == "bid"
-                    else x / df.iloc[0]["depth"]
-                )
-                - 1
-            )
-            df = df[df["depth"] <= max_depth]
-            if df.empty:
-                return dict(book_imbalance=None, spread=None)
-            data[side] = df
-        spread = (float(data["asks"].index[0]) / float(data["bids"].index[0])) - 1
-        book_imbalance = (
-            data["bids"]["volume"].sum() / data["asks"]["volume"].sum()
-        ) - 1
-        return dict(book_imbalance=book_imbalance, spread=spread)
 
     def handle_fractals(self, scoring: dict, pair: str) -> dict:
         fractal_refresh_tmstmp = helpers.REDIS_CON.xrevrange(
@@ -249,36 +193,37 @@ class ExchangeScreener(Initializer):
                 scoring[field] = pair_score[field]
         return scoring
 
+    def technicals_score(self, pair: str) -> dict:
+        scoring = dict()
+        self.add_technical_indicators(pair)
+        scoring["close"] = self.data[pair]["ohlcv"]["close"].iloc[-1]
+        scoring["24h_change"] = (
+            scoring["close"] / self.data[pair]["ohlcv"]["open"].iloc[-1] - 1
+        )
+        try:
+            scoring["rsi"] = (
+                int(self.data[pair]["ohlcv"]["RSI_14"].iloc[-1])
+                if "RSI_14" in self.data[pair]["ohlcv"].columns
+                else None
+            )
+        except ValueError:
+            scoring["rsi"] = None
+        try:
+            scoring["bbl"] = (
+                (scoring["close"] / self.data[pair]["ohlcv"]["BBL_20_2.0"].iloc[-1]) - 1
+                if "BBL_20_2.0" in self.data[pair]["ohlcv"].columns.tolist()
+                else None
+            )
+        except ValueError:
+            scoring["bbl"] = None
+        scoring = self.handle_fractals(scoring, pair)
+        return scoring
+
     def score_pair(self, pair: str) -> dict:
         if pair not in self.data:
             self.data[pair] = dict()
         if self.data[pair].get("ohlcv") is not None:
-            scoring = dict()
-            self.add_technical_indicators(pair)
-            scoring["close"] = self.data[pair]["ohlcv"]["close"].iloc[-1]
-            scoring["24h_change"] = (
-                scoring["close"] / self.data[pair]["ohlcv"]["open"].iloc[-1] - 1
-            )
-            try:
-                scoring["rsi"] = (
-                    int(self.data[pair]["ohlcv"]["RSI_14"].iloc[-1])
-                    if "RSI_14" in self.data[pair]["ohlcv"].columns
-                    else None
-                )
-            except ValueError:
-                scoring["rsi"] = None
-            try:
-                scoring["bbl"] = (
-                    (scoring["close"] / self.data[pair]["ohlcv"]["BBL_20_2.0"].iloc[-1])
-                    - 1
-                    if "BBL_20_2.0" in self.data[pair]["ohlcv"].columns.tolist()
-                    else None
-                )
-            except ValueError:
-                scoring["bbl"] = None
-            scoring = self.handle_fractals(scoring, pair)
-            book_score_details = self.get_book_scoring(pair)
-            scoring = {**scoring, **book_score_details}
+            scoring = self.technicals_score(pair)
             if scoring["support_dist"] and scoring["bbl"] and scoring["rsi"]:
                 scoring["technicals_score"] = 1 / (
                     scoring["rsi"]
