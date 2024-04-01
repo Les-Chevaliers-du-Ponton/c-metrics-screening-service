@@ -1,10 +1,11 @@
 import logging
 import os
 import warnings
+from datetime import datetime as dt, timedelta
 
-import ccxt.async_support as async_ccxt
+import ccxt
 from dotenv import load_dotenv
-from redis.asyncio import Redis
+from redis import Redis
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 LOG = logging.getLogger("screening-service")
@@ -31,17 +32,27 @@ def get_api_keys(exchange: str, websocket: bool = False) -> dict:
             return dict(apiKey=key, secret=secret)
 
 
-def get_exchange_object(exchange: str) -> async_ccxt.Exchange:
-    exchange_class = getattr(async_ccxt, exchange)
+def get_exchange_object(exchange: str) -> ccxt.Exchange:
+    exchange_class = getattr(ccxt, exchange)
     keys = get_api_keys(exchange)
     return exchange_class(keys) if keys else exchange_class()
 
 
-async def get_available_redis_streams() -> list:
+def get_available_redis_streams() -> list:
     i = 0
     all_streams = list()
     while True:
-        i, streams = await REDIS_CON.scan(i, _type="STREAM", match="{real-time}*")
+        i, streams = REDIS_CON.scan(i, _type="STREAM", match="{real-time}-trades-*")
         all_streams += streams
         if i == 0:
             return all_streams
+
+
+def write_fractal_refresh_tmstmp(init: bool = False):
+    tmstmp = dt.now() - timedelta(hours=1) if init else dt.now()
+    REDIS_CON.xadd(
+        "{fractal_refresh_tmstmp}",
+        {"last": tmstmp.isoformat()},
+        maxlen=1,
+        approximate=True,
+    )
