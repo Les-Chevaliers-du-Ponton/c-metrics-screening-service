@@ -240,9 +240,9 @@ class ExchangeScreener(Initializer):
         pairs_to_screen = pairs_to_screen if pairs_to_screen else list(self.data.keys())
         scores = list()
         for pair in pairs_to_screen:
-            scores.append(self.score_pair(pair))
-        if scores:
-            self.scores = pd.DataFrame(scores)
+            if self.score_pair(pair):
+                scores.append(self.score_pair(pair))
+        self.scores = pd.DataFrame(scores)
         if not pairs_to_screen:
             self.all_scores = self.scores.copy()
         if self.verbose:
