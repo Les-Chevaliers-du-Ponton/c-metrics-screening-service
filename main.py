@@ -223,7 +223,7 @@ class ExchangeScreener(Initializer):
     def score_pair(self, pair: str) -> dict:
         if pair not in self.data:
             self.data[pair] = dict()
-        if self.data[pair].get("ohlcv") is not None and not self.data[pair]["ohlcv"]:
+        if self.data[pair].get("ohlcv") is not None and not self.data[pair]["ohlcv"].empty:
             scoring = self.technicals_score(pair)
             if scoring["support_dist"] and scoring["bbl"] and scoring["rsi"]:
                 scoring["technicals_score"] = 1 / (
