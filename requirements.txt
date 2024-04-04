@@ -1,4 +1,4 @@
-ccxt==4.2.85
+ccxt==4.2.89
 pandas==2.2.1
 websockets==12.0
 python-dotenv==1.0.1
