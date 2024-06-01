@@ -3,5 +3,5 @@ pandas==2.2.2
 websockets==12.0
 python-dotenv==1.0.1
 redis==5.0.4
-TA-Lib==0.4.28
+TA-Lib==0.4.30
 pandas-ta==0.3.14b
